@@ -1,8 +1,4 @@
-// ==========================================
-// 【パート 1 / 3】初期化・グローバル変数・ロビー処理
-// ==========================================
-
-// --- Firebase Config & Socket.io の接続初期化 ---
+// --- Firebase Config & Socket.io ---
 const firebaseConfig = {
   apiKey: "AIzaSyBiAVv5McatIqToYysNyoriV_FLW5AChr0",
   databaseURL: "https://shooting-34c1c-default-rtdb.asia-southeast1.firebasedatabase.app/",
@@ -14,11 +10,10 @@ try {
     firebase.initializeApp(firebaseConfig);
     db = firebase.database();
   }
-} catch(e) { console.log("Firebase Connection skipped (Solo ranking unavailable)."); }
+} catch(e) { console.log("Firebase Connection skipped."); }
 
 const socket = io();
 
-// --- 部屋・ネットワーク同期用の管理変数 ---
 let inLobby = false;       
 let currentRoomCode = "public"; 
 let isSpectating = false; 
@@ -35,7 +30,7 @@ let sharedNodes = {};
 let sharedDrops = {}; 
 let myPlayerName = ""; 
 
-// --- Canvas と UI要素の取得 ---
+// Canvas DOM
 const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
 const mCanvas = document.getElementById('minimap-canvas'), mCtx = mCanvas.getContext('2d');
 const hpBar = document.getElementById('hp-bar'), expBar = document.getElementById('exp-bar'), hpTxt = document.getElementById('hp-txt'), expTxt = document.getElementById('exp-txt'), lvNum = document.getElementById('lv-num');
@@ -48,7 +43,6 @@ const btnGrenade = document.getElementById('btn-grenade');
 const survivorsContainer = document.getElementById('survivors-container');
 const survivorsVal = document.getElementById('survivors-val');
 
-// --- ゲームシステム用の状態変数 ---
 let w, h, isOver = false, isVictory = false, vsMatchActive = false, isPaused = true, gameStarted = false, level = 1, exp = 0, nextExp = 5, score = 0;
 let camX = 0, camY = 0, shake = 0, gameMode = 'solo';
 let loopId = null;
@@ -56,7 +50,6 @@ let isLevelUpInvincible = false;
 let levelUpTimeout = null;
 const GAME_SCALE = 1.5;
 
-// --- マップデータの設定 ---
 const TILE_SIZE = 80, MAP_W = 40, MAP_H = 40, map = [];
 
 function generateMap() {
@@ -91,7 +84,6 @@ function updateInputs() {
   currentRoomCode = codeVal !== "" ? codeVal : "public"; 
 }
 
-// --- ソロプレイ用のスコア・ランキング処理 (Firebase) ---
 function submitSoloScore() {
   if (!db || gameMode !== 'solo' || score <= 0) return;
   if (myPlayerName === '↑↑↓↓←→←→BA') return;
@@ -136,7 +128,7 @@ function closeRanking() {
   startScreen.style.display = 'flex';
 }
 
-// --- Socket.io オンラインロビー同期処理 ---
+// --- Socket.io Lobby ---
 function joinLobby() {
   updateInputs();
   startScreen.style.display = 'none';
@@ -251,7 +243,34 @@ socket.on('teams_update', (teams) => {
   p.team = myTeam;
 });
 
-// --- 切断・死亡などのリアルタイムネットワーク受信 ---
+// --- Realtime sync ---
+socket.on('players_update', (serverPlayers) => {
+  if (!gameStarted) return;
+  let opponentCount = 0;
+  Object.keys(serverPlayers).forEach(id => {
+    if (id !== myId) {
+      if (!others[id]) {
+        others[id] = serverPlayers[id];
+        others[id].targetX = serverPlayers[id].x; others[id].targetY = serverPlayers[id].y; others[id].targetAng = serverPlayers[id].ang;
+      } else {
+        const cx = others[id].x, cy = others[id].y, cang = others[id].ang;
+        others[id] = serverPlayers[id];
+        others[id].targetX = serverPlayers[id].x; others[id].targetY = serverPlayers[id].y; others[id].targetAng = serverPlayers[id].ang;
+        others[id].x = cx; others[id].y = cy; others[id].ang = cang;
+      }
+      if (gameMode === 'team_vs') {
+        others[id].team = roomTeams[id];
+        if (roomTeams[id] !== myTeam) opponentCount++;
+      } else { opponentCount++; }
+    }
+  });
+
+  if (serverPlayers[myId] && Object.keys(serverPlayers).length > 1) vsMatchActive = true;
+  if ((gameMode === 'solo_vs' || gameMode === 'team_vs') && vsMatchActive && opponentCount === 0 && p.hp > 0 && !isOver && !isVictory) {
+    triggerVictory();
+  }
+});
+
 socket.on('player_disconnected', (id) => { delete others[id]; });
 socket.on('player_dead', (id) => { delete others[id]; });
 socket.on('take_damage', ({ targetId, dmg }) => {
@@ -261,7 +280,199 @@ socket.on('take_damage', ({ targetId, dmg }) => {
   }
 });
 
-// --- チャット・テキスト処理 ---
+function startGame(mode) {
+  gameMode = mode || 'solo';
+  isOver = false; isVictory = false; vsMatchActive = false; isPaused = false; isSpectating = false; window.isSpectating = false;
+  score = 0; level = 1; exp = 0; nextExp = 5;
+  const btnLeave = document.getElementById('btn-leave-spectate');
+  if (btnLeave) btnLeave.style.display = 'none';
+  isLevelUpInvincible = false;
+  if(levelUpTimeout) { clearTimeout(levelUpTimeout); levelUpTimeout = null; }
+  
+  updateInputs();
+  if (gameMode === 'solo') generateMap();
+
+  bullets.length = 0; enemyBullets.length = 0; enemies.length = 0;
+  cores.length = 0; items.length = 0; grenades.length = 0; nodes.length = 0;
+  sharedNodes = {}; sharedDrops = {};
+  Object.keys(others).forEach(id => delete others[id]);
+
+  p.reset();
+  startScreen.style.display = 'none'; overScreen.style.display = 'none'; victoryScreen.style.display = 'none'; pauseScreen.style.display = 'none';
+  uiLayer.style.display = 'flex'; btnGrenade.style.display = 'flex';
+  document.getElementById('minimap-container').style.display = 'block';
+  document.getElementById('exp-group').style.visibility = 'visible';
+  survivorsContainer.style.display = (gameMode === 'solo_vs' || gameMode === 'team_vs') ? 'block' : 'none';
+
+  let rx, ry, px, py;
+  let attempts = 0;
+  do {
+    rx = Math.floor(Math.random() * (MAP_W - 2)) + 1; ry = Math.floor(Math.random() * (MAP_H - 2)) + 1;
+    px = rx * TILE_SIZE + TILE_SIZE / 2; py = ry * TILE_SIZE + TILE_SIZE / 2;
+    attempts++;
+  } while (attempts < 100 && (!map[ry] || map[ry][rx] === 1 || isCollide(px, py, p.r + 10)));
+
+  p.x = px; p.y = py;
+  camX = p.x - (w / 2) / GAME_SCALE; camY = p.y - (h / 2) / GAME_SCALE;
+
+  if('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    document.getElementById('move-base').style.display = 'block'; document.getElementById('aim-base').style.display = 'block';
+  }
+  if (loopId) cancelAnimationFrame(loopId);
+  gameStarted = true;
+
+  if (gameMode === 'solo' && myPlayerName === '↑↑↓↓←→←→BA') {
+    window.pendingLevelUps = 49; isPaused = true; level++; nextExp += 5; openPanel();
+  }
+  loop();
+}
+
+function triggerVictory() {
+  isVictory = true; isOver = true;
+  if(levelUpTimeout) { clearTimeout(levelUpTimeout); levelUpTimeout = null; }
+  isLevelUpInvincible = false;
+  if (gameMode === 'solo') submitSoloScore();
+  victoryScoreVal.innerText = score; victoryScreen.style.display = 'flex'; uiLayer.style.display = 'none'; btnGrenade.style.display = 'none';
+  if(document.getElementById('move-base')) document.getElementById('move-base').style.display = 'none';
+  if(document.getElementById('aim-base')) document.getElementById('aim-base').style.display = 'none';
+}
+
+function backToTitle() {
+  if(levelUpTimeout) { clearTimeout(levelUpTimeout); levelUpTimeout = null; }
+  isLevelUpInvincible = false;
+  socket.disconnect(); socket.connect();
+  gameStarted = false; isPaused = true; isOver = false; isVictory = false; vsMatchActive = false; isSpectating = false; window.isSpectating = false;
+  const btnLeave = document.getElementById('btn-leave-spectate'); if (btnLeave) btnLeave.style.display = 'none';
+  if(loopId) { cancelAnimationFrame(loopId); loopId = null; }
+
+  overScreen.style.display = 'none'; victoryScreen.style.display = 'none'; pauseScreen.style.display = 'none'; uiLayer.style.display = 'none'; btnGrenade.style.display = 'none'; lvlPanel.style.display = 'none';
+  document.getElementById('minimap-container').style.display = 'none'; document.getElementById('lobby-screen').style.display = 'none';
+  if(document.getElementById('move-base')) document.getElementById('move-base').style.display = 'none';
+  if(document.getElementById('aim-base')) document.getElementById('aim-base').style.display = 'none';
+  startScreen.style.display = 'flex';
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#050505"; ctx.fillRect(0, 0, w, h);
+}
+
+function togglePause() {
+  if (isOver || !gameStarted || lvlPanel.style.display === 'block') return;
+  isPaused = !isPaused; pauseScreen.style.display = isPaused ? 'flex' : 'none';
+}
+
+window.addEventListener('resize', () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; });
+window.dispatchEvent(new Event('resize'));
+
+const keys = {};
+let mouseX = 0, mouseY = 0, isMouseDown = false;
+let touchMoveDir = {x: 0, y: 0}, touchAimDir = {x: 0, y: 0};
+
+window.addEventListener('keydown', e => { 
+  keys[e.code] = true;
+  if(e.code === 'Digit1') p.weaponIdx = 0;
+  if(e.code === 'Digit2') p.weaponIdx = 1;
+  if(e.code === 'Digit3') p.weaponIdx = 2;
+  if(e.code === 'Digit4') p.weaponIdx = 3;
+  if(e.code === 'KeyG') p.throwGrenade();
+  if(e.code === 'KeyP' || e.code === 'Escape') togglePause();
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+window.addEventListener('mousedown', (e) => {
+  if(e.button === 0) isMouseDown = true;
+  if(e.button === 2) { p.throwGrenade(); e.preventDefault(); }
+});
+window.addEventListener('mouseup', (e) => { if(e.button === 0) isMouseDown = false; });
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+let lastWheelTime = 0;
+window.addEventListener('wheel', (e) => {
+  const isScrollable = e.target.closest('#chat-messages, #start-chat-messages, #lobby-players, #ranking-list');
+  if (!isScrollable) e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchmove', (e) => {
+  if (!e.target.closest('#chat-messages, #start-chat-messages, #lobby-players, #ranking-list')) e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('wheel', (e) => {
+  const target = e.target;
+  if (target.closest('#chat-messages') || target.closest('#start-chat-messages') || target.closest('#lobby-players') || target.closest('#ranking-list')) return;
+  e.preventDefault();
+  if (typeof gameStarted === 'undefined' || !gameStarted || isPaused || isOver) return;
+  if (typeof p === 'undefined' || !p) return;
+  const now = Date.now();
+  if (now - lastWheelTime < 100) return;
+  if (e.deltaY > 0) { p.weaponIdx = (p.weaponIdx - 1 + 4) % 4; p.cd = 0; lastWheelTime = now; }
+  else if (e.deltaY < 0) { p.weaponIdx = (p.weaponIdx + 1) % 4; p.cd = 0; lastWheelTime = now; }
+}, { passive: false });
+
+const moveBase = document.getElementById('move-base'), aimBase = document.getElementById('aim-base');
+const moveKnob = document.getElementById('move-knob'), aimKnob = document.getElementById('aim-knob');
+
+function handleTouch(e) {
+  if (!gameStarted || isPaused) return; 
+  let moveFound = false, aimFound = false;
+  for (let i = 0; i < e.touches.length; i++) {
+    const t = e.touches[i];
+    if (t.target.closest('#ui-layer') || t.target.closest('#level-panel') || t.target === btnGrenade || t.target.parentElement === btnGrenade || t.target.closest('#start-chat-container') || t.target.closest('#lobby-chat-container')) continue;
+    e.preventDefault();
+    if (t.clientX < window.innerWidth / 2) {
+      moveFound = true;
+      const rect = moveBase.getBoundingClientRect();
+      const dx = t.clientX - (rect.left + rect.width/2), dy = t.clientY - (rect.top + rect.height/2);
+      const dist = Math.hypot(dx, dy) || 1;
+      touchMoveDir.x = dx / dist; touchMoveDir.y = dy / dist;
+      moveKnob.style.transform = `translate(calc(-50% + ${touchMoveDir.x * 25}px), calc(-50% + ${touchMoveDir.y * 25}px))`;
+    } else {
+      if (!isSpectating) { 
+        aimFound = true;
+        const rect = aimBase.getBoundingClientRect();
+        const dx = t.clientX - (rect.left + rect.width/2), dy = t.clientY - (rect.top + rect.height/2);
+        const dist = Math.hypot(dx, dy) || 1;
+        touchAimDir.x = dx / dist; touchAimDir.y = dy / dist;
+        isMouseDown = true;
+        mouseX = (p.x - camX) * GAME_SCALE + touchAimDir.x * 200; mouseY = (p.y - camY) * GAME_SCALE + touchAimDir.y * 200;
+        aimKnob.style.transform = `translate(calc(-50% + ${touchAimDir.x * 25}px), calc(-50% + ${touchAimDir.y * 25}px))`;
+      }
+    }
+  }
+  if (!moveFound) { touchMoveDir = {x: 0, y: 0}; moveKnob.style.transform = `translate(-50%, -50%)`; }
+  if (!aimFound) { isMouseDown = false; aimKnob.style.transform = `translate(-50%, -50%)`; }
+}
+document.addEventListener('touchstart', handleTouch, {passive: false});
+document.addEventListener('touchmove', handleTouch, {passive: false});
+document.addEventListener('touchend', handleTouch, {passive: false});
+
+const UPGRADES = [
+  { name: "RELOADER", desc: "全武器の連射速度が上昇", action: () => p.rapidMod += 2 },
+  { name: "FIREPOWER", desc: "全武器のダメージが向上", action: () => p.atkBonus += 2.0 },
+  { name: "PIERCING", desc: "SNIPERの貫通数と威力強化", action: () => { p.sniperPierce += 1;p.sniperAtkBonus += 5.0; } },
+  { name: "REACH", desc: "Swordの 攻撃半径が拡大", action: () => p.swordRange += 15 },
+  { name: "HITPOINT", desc: "最大HP+40", action: () => { p.maxHp += 40; p.hp += 40; } },
+  { name: "AGILITY", desc: "移動速度が上昇", action: () => p.speed += 0.6 },
+  { name: "SCATTER", desc: "SHOTGUNの発射弾数が増加", action: () => { p.shotgunPelletsBase += 0.5; p.shotgunSpreadRatio += 0.01; } },
+  { name: "CRITICAL", desc: "クリティカル発生率が5%上昇", action: () => p.critChance += 0.05 },
+  { name: "REGENE", desc: "体力が徐々に回復する", action: () => p.regen += 0.005 },
+  { name: "EXPLOSION", desc: "グレネードの爆発範囲が拡大",  action: () => { p.grenadeRangeBonus = (p.grenadeRangeBonus || 0) + 30; } },
+];
+
+function joinMidMatchSpectator() {
+  startScreen.style.display = 'none'; document.getElementById('lobby-screen').style.display = 'none';
+  socket.emit('join_spectator', { roomCode: currentRoomCode, myId });
+}
+
+function startSpectate() {
+  window.isSpectating = true; window.matchEnding = false; isOver = false; overScreen.style.display = 'none';
+  const viewScale = GAME_SCALE * 0.8;
+  camX = p.x - (w / 2) / viewScale; camY = p.y - (h / 2) / viewScale;
+  const btnLeave = document.getElementById('btn-leave-spectate'); if (btnLeave) btnLeave.style.display = 'block';
+  if (survivorsContainer) { survivorsContainer.style.display = 'block'; survivorsContainer.style.zIndex = '100'; }
+  const minimapCont = document.getElementById('minimap-container'); if (minimapCont) { minimapCont.style.display = 'block'; minimapCont.style.zIndex = '100'; }
+  if('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    const moveBase = document.getElementById('move-base'); if (moveBase) moveBase.style.display = 'block';
+  }
+}
+
+// --- Chat functions ---
 function escapeHTML(str) { return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)); }
 function autoLink(text) { const urlRegex = /(https?:\/\/[^\s]+)/g; return text.replace(urlRegex, url => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`); }
 function formatTime(t) { if(!t) return ""; const d = new Date(t); return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
@@ -311,7 +522,7 @@ function toggleChat(containerId, tabId) {
   if (c.classList.contains('chat-collapsed')) t.classList.add('visible'); else t.classList.remove('visible');
 }
 
-// --- フィールド内の同期（ノード、ドロップ）受信 ---
+// --- Dynamic nodes & drops sync ---
 socket.on('node_spawned', (node) => { sharedNodes[node.id] = node; });
 socket.on('node_updated', ({ nodeId, hp }) => { if (sharedNodes[nodeId]) sharedNodes[nodeId].hp = hp; });
 socket.on('node_destroyed', ({ nodeId, x, y }) => {
@@ -328,61 +539,8 @@ socket.on('drop_picked', ({ dropId, drop }) => {
 });
 socket.on('drop_list_update', (list) => { sharedDrops = list; });
 socket.on('room_reset_by_admin', () => { alert("Room force reset by Admin."); backToTitle(); });
-// ==========================================
-// 【パート 2 / 3】ゲームキャラクター・攻撃オブジェクト定義
-// ==========================================
 
-// --- A*アルゴリズムによる経路探索処理 ---
-function getPath(startX, startY, goalX, goalY) {
-  const sX = Math.floor(startX / TILE_SIZE), sY = Math.floor(startY / TILE_SIZE);
-  const gX = Math.floor(goalX / TILE_SIZE), gY = Math.floor(goalY / TILE_SIZE);
-
-  if (sX === gX && sY === gY) return [];
-
-  const open = [{ x: sX, y: sY, g: 0, h: Math.abs(sX - gX) + Math.abs(sY - gY), parent: null }];
-  const closed = new Set();
-
-  while (open.length > 0) {
-    open.sort((a, b) => (a.g + a.h) - (b.g + b.h));
-    const current = open.shift();
-    const key = `${current.x},${current.y}`;
-
-    if (current.x === gX && current.y === gY) {
-      const path = [];
-      let curr = current;
-      while (curr.parent) {
-        path.push({ x: curr.x * TILE_SIZE + TILE_SIZE / 2, y: curr.y * TILE_SIZE + TILE_SIZE / 2 });
-        curr = curr.parent;
-      }
-      return path.reverse();
-    }
-
-    closed.add(key);
-    const dirs = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
-    for (let d of dirs) {
-      const nX = current.x + d[0], nY = current.y + d[1];
-      const nKey = `${nX},${nY}`;
-
-      if (nX < 0 || nY < 0 || nX >= MAP_W || nY >= MAP_H) continue;
-      if (map[nY] && map[nY][nX]) continue;
-      if (closed.has(nKey)) continue;
-
-      if (d[0] !== 0 && d[1] !== 0 && (map[current.y][nX] || map[nY][current.x])) continue;
-
-      const gCost = current.g + (d[0] === 0 || d[1] === 0 ? 1 : Math.SQRT2);
-      const existing = open.find(n => n.x === nX && n.y === nY);
-
-      if (!existing) {
-        open.push({ x: nX, y: nY, g: gCost, h: Math.abs(nX - gX) + Math.abs(nY - gY), parent: current });
-      } else if (gCost < existing.g) {
-        existing.g = gCost; existing.parent = current;
-      }
-    }
-  }
-  return [];
-}
-
-// --- Playerクラスの定義 ---
+// --- Game Objects ---
 class Player {
   constructor() { this.reset(); }
   reset() {
@@ -530,7 +688,6 @@ class Player {
   }
 }
 
-// --- Bulletクラスの定義 ---
 class Bullet {
   constructor(x, y, ang, atk, spd, col, r, pierce, isSniper = false) {
     this.x = x; this.y = y; this.vx = Math.cos(ang)*spd; this.vy = Math.sin(ang)*spd;
@@ -560,7 +717,7 @@ class Bullet {
         }
       });
       nodes.forEach(n => {
-        if (!this.hitList.includes(n) && Math.hypot(n.x-n.x, n.y-n.y) < n.r + this.r + 5) {
+        if (!this.hitList.includes(n) && Math.hypot(this.x-n.x, this.y-n.y) < n.r + this.r + 5) {
           let crit = Math.random() < p.critChance ? p.critMult : 1; n.hp -= this.atk*crit; this.hitList.push(n); this.pierce--;
           if (this.pierce <= 0) this.dead = true;
           if (crit > 1) explosions.push(new Explosion(n.x, n.y, 15, "rgba(255,0,170,0.4)", "CRIT!")); else { for(let i=0; i<3; i++) particles.push(new Particle(this.x, this.y, this.col)); }
@@ -597,7 +754,6 @@ class Bullet {
   }
 }
 
-// --- Explosionクラスの定義 ---
 class Explosion {
   constructor(x, y, r, col, text = "", textCol = null) {
     this.x = x; this.y = y; this.r = r; this.col = col; this.timer = 35; this.maxTimer = 35; this.text = text;
@@ -621,7 +777,6 @@ class Explosion {
   }
 }
 
-// --- Grenadeクラスの定義 ---
 class Grenade {
   constructor(x, y, ang, owner = 'solo', dmg = 35, range = 280) {
     this.x = x; this.y = y; const dist = 250; this.tx = x + Math.cos(ang)*dist; this.ty = y + Math.sin(ang)*dist;
@@ -663,7 +818,6 @@ class Grenade {
   }
 }
 
-// --- EnemyBulletクラスの定義 ---
 class EnemyBullet {
   constructor(x, y, ang, spd, dmg, type) {
     this.x = x; this.y = y; this.vx = Math.cos(ang)*spd; this.vy = Math.sin(ang)*spd;
@@ -684,38 +838,71 @@ class EnemyBullet {
     ctx.restore();
   }
 }
-// ==========================================
-// 【パート 3 / 3】敵キャラクター・ゲームループ・初期化
-// ==========================================
 
-// --- Enemyクラスの定義 ---
+function getPath(startX, startY, goalX, goalY) {
+  const sX = Math.floor(startX / TILE_SIZE), sY = Math.floor(startY / TILE_SIZE);
+  const gX = Math.floor(goalX / TILE_SIZE), gY = Math.floor(goalY / TILE_SIZE);
+
+  if (sX === gX && sY === gY) return [];
+
+  const open = [{ x: sX, y: sY, g: 0, h: Math.abs(sX - gX) + Math.abs(sY - gY), parent: null }];
+  const closed = new Set();
+
+  while (open.length > 0) {
+    open.sort((a, b) => (a.g + a.h) - (b.g + b.h));
+    const current = open.shift();
+    const key = `${current.x},${current.y}`;
+
+    if (current.x === gX && current.y === gY) {
+      const path = [];
+      let curr = current;
+      while (curr.parent) {
+        path.push({ x: curr.x * TILE_SIZE + TILE_SIZE / 2, y: curr.y * TILE_SIZE + TILE_SIZE / 2 });
+        curr = curr.parent;
+      }
+      return path.reverse();
+    }
+
+    closed.add(key);
+    const dirs = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+    for (let d of dirs) {
+      const nX = current.x + d[0], nY = current.y + d[1];
+      const nKey = `${nX},${nY}`;
+
+      if (nX < 0 || nY < 0 || nX >= MAP_W || nY >= MAP_H) continue;
+      if (map[nY] && map[nY][nX]) continue;
+      if (closed.has(nKey)) continue;
+
+      if (d[0] !== 0 && d[1] !== 0 && (map[current.y][nX] || map[nY][current.x])) continue;
+
+      const gCost = current.g + (d[0] === 0 || d[1] === 0 ? 1 : Math.SQRT2);
+      const existing = open.find(n => n.x === nX && n.y === nY);
+
+      if (!existing) {
+        open.push({ x: nX, y: nY, g: gCost, h: Math.abs(nX - gX) + Math.abs(nY - gY), parent: current });
+      } else if (gCost < existing.g) {
+        existing.g = gCost; existing.parent = current;
+      }
+    }
+  }
+  return [];
+}
+
 class Enemy {
   constructor() {
     const rand = Math.random();
-    if (rand < 0.10) { 
-      this.type = 'HEAVY'; this.r = 22; this.maxHp = 5 + level*2.5; this.speed = 0.8 + level*0.05; 
-    } else if (rand < 0.25) { 
-      this.type = 'TICK'; this.r = 8; this.maxHp = 1.2 + level*0.2; this.speed = 4.0 + level*0.1; 
-      this.blastDmg = 38 + level*2.0; this.blastR = 130; this.exploding = 0; 
-    } else if (rand < 0.35) { 
-      this.type = 'MEDIC'; this.r = 14; this.maxHp = 3.2 + level*2.0; this.speed = 1.2 + level*0.1; 
-      this.healCd = 120; 
-    } else if (rand < 0.60) { 
-      this.type = 'SCOUT'; this.r = 9; this.maxHp = 1.5 + level*0.8; this.speed = 3.5 + level*0.1; 
-    } else { 
-      this.type = 'NORMAL'; this.r = 16; this.maxHp = 3 + level*1.8; this.speed = 1.5 + level*0.1; 
-    }
+    if (rand < 0.10) { this.type = 'HEAVY'; this.r = 22; this.maxHp = 5 + level*2.5; this.speed = 0.8 + level*0.05; }
+    else if (rand < 0.25) { this.type = 'TICK'; this.r = 8; this.maxHp = 1.2 + level*0.2; this.speed = 4.0 + level*0.1; this.blastDmg = 38 + level*2.0; this.blastR = 130; this.exploding = 0; }
+    else if (rand < 0.35) { this.type = 'MEDIC'; this.r = 14; this.maxHp = 3.2 + level*2.0; this.speed = 1.2 + level*0.1; this.healCd = 120; }
+    else if (rand < 0.60) { this.type = 'SCOUT'; this.r = 9; this.maxHp = 1.5 + level*0.8; this.speed = 3.5 + level*0.1; }
+    else { this.type = 'NORMAL'; this.r = 16; this.maxHp = 3 + level*1.8; this.speed = 1.5 + level*0.1; }
     let ex, ey, attempts = 0;
-    do { 
-      ex = Math.random()*MAP_W*TILE_SIZE; 
-      ey = Math.random()*MAP_H*TILE_SIZE; 
-      attempts++; 
-    } while ((isCollide(ex, ey, this.r) || Math.hypot(p.x - ex, p.y - ey) < 600) && attempts < 100);
+    do { ex = Math.random()*MAP_W*TILE_SIZE; ey = Math.random()*MAP_H*TILE_SIZE; attempts++; } while ((isCollide(ex, ey, this.r) || Math.hypot(p.x - ex, p.y - ey) < 600) && attempts < 100);
     this.x = ex; this.y = ey; this.hp = this.maxHp; this.dead = false; this.shootCd = Math.random()*100; this.angleOffset = Math.random()*Math.PI*2; this.facingAngle = 0; this.path = []; this.pathTimer = Math.floor(Math.random()*30);
   }
   die() {
     if (this.dead) return;
-    if (this.type === 'TICK') { this.explode(false); }
+    if (this.type === 'TICK') this.explode(false);
     else {
       this.dead = true; score += (this.type==='SCOUT'?200:(this.type==='HEAVY'?300:(this.type==='MEDIC'?250:100)));
       cores.push(new ExpCore(this.x, this.y)); spawnDrop(this.x, this.y); explosions.push(new Explosion(this.x, this.y, this.r*1.8, "rgba(255,255,255,0.4)"));
@@ -799,7 +986,6 @@ class Enemy {
   }
 }
 
-// --- DataNodeクラスの定義 ---
 class DataNode {
   constructor() {
     let ex, ey; do { ex = Math.random()*MAP_W*TILE_SIZE; ey = Math.random()*MAP_H*TILE_SIZE; } while (getWall(ex, ey) || Math.hypot(p.x - ex, p.y - ey) < 300);
@@ -820,13 +1006,12 @@ class DataNode {
   }
 }
 
-// --- 各種アイテム・エフェクトクラス定義 ---
 class ExpCore { constructor(x,y){this.x=x;this.y=y;this.dead=false;} update(){const a=Math.atan2(p.y-this.y,p.x-this.x);this.x+=Math.cos(a)*12;this.y+=Math.sin(a)*12;} draw(){ctx.shadowBlur=10;ctx.shadowColor="yellow";ctx.fillStyle='#fff000';ctx.beginPath();ctx.arc(this.x-camX,this.y-camY,4,0,7);ctx.fill();ctx.shadowBlur=0;} }
 class HealthItem { constructor(x,y){this.x=x;this.y=y;this.dead=false;} update(){const d=Math.hypot(p.x-this.x,p.y-this.y);if(d<50){const a=Math.atan2(p.y-this.y,p.x-this.x);this.x+=Math.cos(a)*12;this.y+=Math.sin(a)*12;}if(d<20){p.hp=Math.min(p.maxHp,p.hp+20);this.dead=true;shake=5;}} draw(){ctx.shadowBlur=15;ctx.shadowColor="#32ff7e";ctx.fillStyle='#32ff7e';ctx.fillRect(this.x-camX-2,this.y-camY-6,4,12);ctx.fillRect(this.x-camX-6,this.y-camY-2,12,4);ctx.shadowBlur=0;} }
 class GrenadeItem { constructor(x,y){this.x=x;this.y=y;this.dead=false;} update(){const d=Math.hypot(p.x-this.x,p.y-this.y);if(d<50){const a=Math.atan2(p.y-this.y,p.x-this.x);this.x+=Math.cos(a)*12;this.y+=Math.sin(a)*12;}if(d<20){p.grenades+=2;this.dead=true;shake=5;}} draw(){ctx.shadowBlur=15;ctx.shadowColor="#00f2ff";ctx.fillStyle='#00f2ff';ctx.fillRect(this.x-camX-5,this.y-camY-5,10,10);ctx.shadowBlur=0;} }
 class Particle { constructor(x,y,col,mul=1){this.x=x;this.y=y;const a=Math.random()*Math.PI*2,s=(Math.random()*2+1)*mul;this.vx=Math.cos(a)*s;this.vy=Math.sin(a)*s;this.timer=10+Math.random()*5;this.col=col;} update(){this.x+=this.vx;this.y+=this.vy;this.vx*=0.9;this.vy*=0.9;this.timer--;} draw(){ctx.fillStyle=this.col;ctx.fillRect(this.x-camX-1,this.y-camY-1,2,2);} }
 
-// --- ミニマップ描画処理 ---
+// --- Game loops & Minimap rendering ---
 function drawMinimap() {
   const center = 80, scale = 0.12;
   mCtx.clearRect(0,0,160,160);
@@ -859,7 +1044,6 @@ function drawMinimap() {
   if (!window.isSpectating) { mCtx.beginPath(); mCtx.arc(center,center,4,0,7); mCtx.fill(); }
 }
 
-// --- メインゲームループ ---
 function loop() {
   if (!gameStarted) return;
   if (isVsMode() && p.matchStartTime) {
@@ -1024,7 +1208,7 @@ function openPanel() {
   levelUpTimeout = setTimeout(() => { if (lvlPanel.style.display === 'block') select(choices[0], null); }, 10000);
 }
 
-// 管理者ショートカット (cキー + Admin826パスワード)
+// 管理者ショートカット (cキー + Admin826)
 document.addEventListener('keydown', (e) => {
   if (e.key === 'c') {
     const pName = document.getElementById('player-name').value.trim();
@@ -1038,7 +1222,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// --- グローバルプレイヤーインスタンス初期化 ---
+// --- Player instance initialization ---
 const p = new Player();
 
 window.onload = () => { ctx.fillStyle = "#050505"; ctx.fillRect(0,0,w,h); };
