@@ -135,6 +135,8 @@ function closeRanking() {
 
 // --- Socket.io 通信イベント (Firebase同期の置き換え) ---
 
+// --- Socket.io 受信イベント (デバッグ修正版) ---
+
 socket.on('lobby_update', (data) => {
   lastLobbyData = data;
   onLobbyUpdate();
@@ -173,7 +175,7 @@ socket.on('players_update', (data) => {
   }
   if (data[myId]) {
      if (Object.keys(data).length > 1) vsMatchActive = true; 
-     if ((gameMode === 'solo_vs' || gameMode === 'team_vs') && vsMatchActive && opponentIds === 0 && p.hp > 0 && !isOver && !isVictory) {
+     if (typeof p !== 'undefined' && (gameMode === 'solo_vs' || gameMode === 'team_vs') && vsMatchActive && opponentIds === 0 && p.hp > 0 && !isOver && !isVictory) {
        triggerVictory();
      }
   }
@@ -196,7 +198,7 @@ socket.on('players_update', (data) => {
 });
 
 socket.on('take_damage', ({ targetId, dmg }) => {
-  if (targetId === myId) {
+  if (targetId === myId && typeof p !== 'undefined') {
     if (isLevelUpInvincible) return;
     p.hp = Math.max(0, p.hp - dmg);
     shake = 10;
@@ -205,12 +207,29 @@ socket.on('take_damage', ({ targetId, dmg }) => {
 
 socket.on('node_spawned', (nodeData) => { sharedNodes[nodeData.id] = nodeData; });
 socket.on('node_updated', ({ nodeId, hp }) => { if(sharedNodes[nodeId]) sharedNodes[nodeId].hp = hp; });
-socket.on('node_destroyed', ({ nodeId }) => { delete sharedNodes[nodeId]; });
+
+// ★【重要修正】ここで経験値アイテム(ExpCore)を生成するようにしました
+socket.on('node_destroyed', ({ nodeId, x, y }) => { 
+  if (sharedNodes[nodeId]) {
+    // 爆発エフェクト
+    if (typeof Explosion !== 'undefined') explosions.push(new Explosion(x, y, 25, "rgba(255, 255, 255, 0.5)"));
+    if (typeof Particle !== 'undefined') {
+      for(let i=0; i<6; i++) particles.push(new Particle(x, y, "#fff000", 1.5));
+    }
+    // 経験値アイテムの生成
+    if (typeof ExpCore !== 'undefined') {
+      cores.push(new ExpCore(x, y));
+    }
+    score += 50;
+    shake = 5;
+    delete sharedNodes[nodeId]; 
+  }
+});
+
 socket.on('drop_spawned', ({ dropId, dropData }) => { sharedDrops[dropId] = dropData; });
 socket.on('drop_picked', ({ dropId }) => { delete sharedDrops[dropId]; });
 socket.on('node_list_update', (list) => { sharedNodes = list; });
 socket.on('drop_list_update', (list) => { sharedDrops = list; });
-
 // --- ロビー制御ロジック ---
 
 function joinLobby() {
