@@ -12,7 +12,30 @@ try {
   }
 } catch(e) { console.log("Firebase Connection skipped."); }
 
-const socket = io();
+// --- Socket.io クラッシュ防止用安全接続処理 ---
+let socket = null;
+if (typeof io !== 'undefined') {
+  try {
+    socket = io();
+  } catch(e) {
+    console.warn("Socket.io connection failed, falling back to dummy socket.", e);
+  }
+}
+
+if (!socket) {
+  console.warn("io is not defined or socket.io connection failed. Solo mode remains active.");
+  // 通信エラー時でも全体が停止しないよう、モック（ダミー）関数に置換
+  socket = {
+    on: function(event, callback) {
+      console.log(`[Dummy Socket] registered listener for: ${event}`);
+    },
+    emit: function(event, data) {
+      console.log(`[Dummy Socket] emitted: ${event}`, data);
+    },
+    disconnect: function() {},
+    connect: function() {}
+  };
+}
 
 let inLobby = false;       
 let currentRoomCode = "public"; 
@@ -174,8 +197,8 @@ class Player {
           if (!this.swingHitList.includes(e) && Math.hypot(e.x-this.x, e.y-this.y) < this.swordRange + e.r) {
             let d = (Math.atan2(e.y-this.y, e.x-this.x) - this.swingStartAng) % (Math.PI*2); if (d < 0) d += Math.PI*2;
             if (d <= pct*this.swingArc) {
-              let crit = Math.random() < this.critChance ? this.critMult : 1; e.hp -= (4 + this.atkBonus)*crit; this.swingHitList.push(e);
-              if (crit > 1) explosions.push(new Explosion(e.x, e.y, 15, "rgba(255,0,170,0.4)", "CRIT!")); else { for(let i=0; i<4; i++) particles.push(new Particle(e.x, e.y, col)); }
+              let pctValue = Math.random() < this.critChance ? this.critMult : 1; e.hp -= (4 + this.atkBonus)*pctValue; this.swingHitList.push(e);
+              if (pctValue > 1) explosions.push(new Explosion(e.x, e.y, 15, "rgba(255,0,170,0.4)", "CRIT!")); else { for(let i=0; i<4; i++) particles.push(new Particle(e.x, e.y, col)); }
               if (e.hp <= 0 && !e.dead) e.die();
             }
           }
@@ -184,8 +207,8 @@ class Player {
           if (!this.swingHitList.includes(n) && Math.hypot(n.x-this.x, n.y-this.y) < this.swordRange + n.r) {
             let d = (Math.atan2(n.y-this.y, n.x-this.x) - this.swingStartAng) % (Math.PI*2); if (d < 0) d += Math.PI*2;
             if (d <= pct*this.swingArc) {
-              let crit = Math.random() < this.critChance ? this.critMult : 1; n.hp -= (4 + this.atkBonus)*crit; this.swingHitList.push(n);
-              if (crit > 1) explosions.push(new Explosion(n.x, n.y, 15, "rgba(255,0,170,0.4)", "CRIT!")); else { for(let i=0; i<4; i++) particles.push(new Particle(n.x, n.y, col)); }
+              let pctValue = Math.random() < this.critChance ? this.critMult : 1; n.hp -= (4 + this.atkBonus)*pctValue; this.swingHitList.push(n);
+              if (pctValue > 1) explosions.push(new Explosion(n.x, n.y, 15, "rgba(255,0,170,0.4)", "CRIT!")); else { for(let i=0; i<4; i++) particles.push(new Particle(n.x, n.y, col)); }
               if (n.hp <= 0 && !n.dead) n.die();
             }
           }
@@ -197,10 +220,10 @@ class Player {
             let d = (Math.atan2(o.y - this.y, o.x - this.x) - this.swingStartAng) % (Math.PI*2); if (d < 0) d += Math.PI*2;
             if (d <= pct*this.swingArc) {
               this.swingHitList.push(id);
-              let crit = Math.random() < this.critChance ? this.critMult : 1, dmg = (4 + this.atkBonus)*crit;
+              let pctValue = Math.random() < this.critChance ? this.critMult : 1, dmg = (4 + this.atkBonus)*pctValue;
               if (o.hp <= dmg) { if(!window.myKills) window.myKills={}; window.myKills[id] = Date.now(); }
               socket.emit('damage_event', { targetId: id, dmg });
-              if (crit > 1) {
+              if (pctValue > 1) {
                 explosions.push(new Explosion(o.x, o.y, 15, "rgba(255,0,170,0.4)", "CRIT!"));
                 this.myCrits.push({ id: Math.random().toString(36).substring(2), x: o.x, y: o.y, t: Date.now() });
               } else { for(let i=0; i<4; i++) particles.push(new Particle(o.x, o.y, col)); }
@@ -1143,6 +1166,90 @@ socket.on('room_reset_by_admin', () => { alert("Room force reset by Admin."); ba
 // DOM & WINDOW EVENT LISTENERS
 // ==========================================
 
+window.addEventListener('resize', () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; });
+window.dispatchEvent(new Event('resize'));
+
+const keys = {};
+let mouseX = 0, mouseY = 0, isMouseDown = false;
+let touchMoveDir = {x: 0, y: 0}, touchAimDir = {x: 0, y: 0};
+
+window.addEventListener('keydown', e => { 
+  keys[e.code] = true;
+  if(e.code === 'Digit1') p.weaponIdx = 0;
+  if(e.code === 'Digit2') p.weaponIdx = 1;
+  if(e.code === 'Digit3') p.weaponIdx = 2;
+  if(e.code === 'Digit4') p.weaponIdx = 3;
+  if(e.code === 'KeyG') p.throwGrenade();
+  if(e.code === 'KeyP' || e.code === 'Escape') togglePause();
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+window.addEventListener('mousedown', (e) => {
+  if(e.button === 0) isMouseDown = true;
+  if(e.button === 2) { p.throwGrenade(); e.preventDefault(); }
+});
+window.addEventListener('mouseup', (e) => { if(e.button === 0) isMouseDown = false; });
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+let lastWheelTime = 0;
+window.addEventListener('wheel', (e) => {
+  const isScrollable = e.target.closest('#chat-messages, #start-chat-messages, #lobby-players, #ranking-list');
+  if (!isScrollable) e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchmove', (e) => {
+  if (!e.target.closest('#chat-messages, #start-chat-messages, #lobby-players, #ranking-list')) e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('wheel', (e) => {
+  const target = e.target;
+  if (target.closest('#chat-messages') || target.closest('#start-chat-messages') || target.closest('#lobby-players') || target.closest('#ranking-list')) return;
+  e.preventDefault();
+  if (typeof gameStarted === 'undefined' || !gameStarted || isPaused || isOver) return;
+  if (typeof p === 'undefined' || !p) return;
+  const now = Date.now();
+  if (now - lastWheelTime < 100) return;
+  if (e.deltaY > 0) { p.weaponIdx = (p.weaponIdx - 1 + 4) % 4; p.cd = 0; lastWheelTime = now; }
+  else if (e.deltaY < 0) { p.weaponIdx = (p.weaponIdx + 1) % 4; p.cd = 0; lastWheelTime = now; }
+}, { passive: false });
+
+const moveBase = document.getElementById('move-base'), aimBase = document.getElementById('aim-base');
+const moveKnob = document.getElementById('move-knob'), aimKnob = document.getElementById('aim-knob');
+
+function handleTouch(e) {
+  if (!gameStarted || isPaused) return; 
+  let moveFound = false, aimFound = false;
+  for (let i = 0; i < e.touches.length; i++) {
+    const t = e.touches[i];
+    if (t.target.closest('#ui-layer') || t.target.closest('#level-panel') || t.target === btnGrenade || t.target.parentElement === btnGrenade || t.target.closest('#start-chat-container') || t.target.closest('#lobby-chat-container')) continue;
+    e.preventDefault();
+    if (t.clientX < window.innerWidth / 2) {
+      moveFound = true;
+      const rect = moveBase.getBoundingClientRect();
+      const dx = t.clientX - (rect.left + rect.width/2), dy = t.clientY - (rect.top + rect.height/2);
+      const dist = Math.hypot(dx, dy) || 1;
+      touchMoveDir.x = dx / dist; touchMoveDir.y = dy / dist;
+      moveKnob.style.transform = `translate(calc(-50% + ${touchMoveDir.x * 25}px), calc(-50% + ${touchMoveDir.y * 25}px))`;
+    } else {
+      if (!isSpectating) { 
+        aimFound = true;
+        const rect = aimBase.getBoundingClientRect();
+        const dx = t.clientX - (rect.left + rect.width/2), dy = t.clientY - (rect.top + rect.height/2);
+        const dist = Math.hypot(dx, dy) || 1;
+        touchAimDir.x = dx / dist; touchAimDir.y = dy / dist;
+        isMouseDown = true;
+        mouseX = (p.x - camX) * GAME_SCALE + touchAimDir.x * 200; mouseY = (p.y - camY) * GAME_SCALE + touchAimDir.y * 200;
+        aimKnob.style.transform = `translate(calc(-50% + ${touchAimDir.x * 25}px), calc(-50% + ${touchAimDir.y * 25}px))`;
+      }
+    }
+  }
+  if (!moveFound) { touchMoveDir = {x: 0, y: 0}; moveKnob.style.transform = `translate(-50%, -50%)`; }
+  if (!aimFound) { isMouseDown = false; aimKnob.style.transform = `translate(-50%, -50%)`; }
+}
+document.addEventListener('touchstart', handleTouch, {passive: false});
+document.addEventListener('touchmove', handleTouch, {passive: false});
+document.addEventListener('touchend', handleTouch, {passive: false});
+
 window.addEventListener('DOMContentLoaded', () => {
   const btnSendChat = document.getElementById('btn-send-chat'), chatInput = document.getElementById('chat-input');
   if (btnSendChat) btnSendChat.addEventListener('click', sendChatMessage);
@@ -1167,5 +1274,18 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+const UPGRADES = [
+  { name: "RELOADER", desc: "全武器の連射速度が上昇", action: () => p.rapidMod += 2 },
+  { name: "FIREPOWER", desc: "全武器のダメージが向上", action: () => p.atkBonus += 2.0 },
+  { name: "PIERCING", desc: "SNIPERの貫通数と威力強化", action: () => { p.sniperPierce += 1;p.sniperAtkBonus += 5.0; } },
+  { name: "REACH", desc: "Swordの 攻撃半径が拡大", action: () => p.swordRange += 15 },
+  { name: "HITPOINT", desc: "最大HP+40", action: () => { p.maxHp += 40; p.hp += 40; } },
+  { name: "AGILITY", desc: "移動速度が上昇", action: () => p.speed += 0.6 },
+  { name: "SCATTER", desc: "SHOTGUNの発射弾数が増加", action: () => { p.shotgunPelletsBase += 0.5; p.shotgunSpreadRatio += 0.01; } },
+  { name: "CRITICAL", desc: "クリティカル発生率が5%上昇", action: () => p.critChance += 0.05 },
+  { name: "REGENE", desc: "体力が徐々に回復する", action: () => p.regen += 0.005 },
+  { name: "EXPLOSION", desc: "グレネードの爆発範囲が拡大",  action: () => { p.grenadeRangeBonus = (p.grenadeRangeBonus || 0) + 30; } },
+];
 
 window.onload = () => { ctx.fillStyle = "#050505"; ctx.fillRect(0,0,w,h); };
