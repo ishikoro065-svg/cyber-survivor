@@ -839,8 +839,54 @@ class EnemyBullet {
   }
 }
 
-// ... (他Enemy、DataNode、ExpCore、HealthItem、GrenadeItem、Particle等のクラス定義は以前と同様に完全移行) ...
-// 記述量を最適化し、必要な変数・ロジックをすべて保持しています。
+function getPath(startX, startY, goalX, goalY) {
+  const sX = Math.floor(startX / TILE_SIZE), sY = Math.floor(startY / TILE_SIZE);
+  const gX = Math.floor(goalX / TILE_SIZE), gY = Math.floor(goalY / TILE_SIZE);
+
+  if (sX === gX && sY === gY) return [];
+
+  const open = [{ x: sX, y: sY, g: 0, h: Math.abs(sX - gX) + Math.abs(sY - gY), parent: null }];
+  const closed = new Set();
+
+  while (open.length > 0) {
+    open.sort((a, b) => (a.g + a.h) - (b.g + b.h));
+    const current = open.shift();
+    const key = `${current.x},${current.y}`;
+
+    if (current.x === gX && current.y === gY) {
+      const path = [];
+      let curr = current;
+      while (curr.parent) {
+        path.push({ x: curr.x * TILE_SIZE + TILE_SIZE / 2, y: curr.y * TILE_SIZE + TILE_SIZE / 2 });
+        curr = curr.parent;
+      }
+      return path.reverse();
+    }
+
+    closed.add(key);
+    const dirs = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+    for (let d of dirs) {
+      const nX = current.x + d[0], nY = current.y + d[1];
+      const nKey = `${nX},${nY}`;
+
+      if (nX < 0 || nY < 0 || nX >= MAP_W || nY >= MAP_H) continue;
+      if (map[nY] && map[nY][nX]) continue;
+      if (closed.has(nKey)) continue;
+
+      if (d[0] !== 0 && d[1] !== 0 && (map[current.y][nX] || map[nY][current.x])) continue;
+
+      const gCost = current.g + (d[0] === 0 || d[1] === 0 ? 1 : Math.SQRT2);
+      const existing = open.find(n => n.x === nX && n.y === nY);
+
+      if (!existing) {
+        open.push({ x: nX, y: nY, g: gCost, h: Math.abs(nX - gX) + Math.abs(nY - gY), parent: current });
+      } else if (gCost < existing.g) {
+        existing.g = gCost; existing.parent = current;
+      }
+    }
+  }
+  return [];
+}
 
 class Enemy {
   constructor() {
@@ -1058,7 +1104,6 @@ function loop() {
       });
     });
 
-    // ホストプレイヤーが共有ノード(クリスタル)を自動生成
     const pList = Object.keys(others); pList.push(myId); pList.sort();
     let maxN = p.safeZoneR !== undefined ? Math.floor(3 + ((p.safeZoneR-400)/2800)*7) : 10;
     if (pList[0] === myId && Math.random() < 0.02 && Object.keys(sharedNodes).length < Math.max(3, maxN)) {
@@ -1071,7 +1116,6 @@ function loop() {
     }
   }
 
-  // 他プレイヤーの描画処理
   Object.keys(others).forEach(id => {
     const o = others[id]; if (o.targetX !== undefined) { o.x += (o.targetX-o.x)*0.3; o.y += (o.targetY-o.y)*0.3; }
     if (o.targetAng !== undefined) { let diff = o.targetAng-o.ang; while(diff<-Math.PI) diff+=Math.PI*2; while(diff>Math.PI) diff-=Math.PI*2; o.ang += diff*0.3; }
@@ -1093,7 +1137,6 @@ function loop() {
 
   if (gameMode === 'solo' && enemies.length < 7 + Math.floor(level/1.1)) enemies.push(new Enemy());
 
-  // 各エンティティのアップデートとクリーンアップ
   [bullets, enemyBullets, cores, items, enemies, grenades, nodes, explosions, particles].forEach(arr => {
     for(let i=arr.length-1; i>=0; i--) {
       arr[i].update(); arr[i].draw();
@@ -1110,7 +1153,6 @@ function loop() {
   ctx.restore();
   drawMinimap();
 
-  // 観戦者画面用のゲーム終了判定表示
   if (isVsMode() && window.isSpectating && vsMatchActive) {
     const sIds = Object.keys(others);
     let matchOver = false, winner = "DRAW";
@@ -1137,7 +1179,6 @@ function loop() {
     }
   }
 
-  // 自プレイヤーの死亡判定
   if (p.hp <= 0 && !isOver && !window.isSpectating) {
     isOver = true; if(levelUpTimeout) clearTimeout(levelUpTimeout);
     if (gameMode === 'solo') submitSoloScore();
@@ -1180,5 +1221,8 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// --- Player instance initialization ---
+const p = new Player();
 
 window.onload = () => { ctx.fillStyle = "#050505"; ctx.fillRect(0,0,w,h); };
