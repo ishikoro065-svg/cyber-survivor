@@ -446,12 +446,154 @@
 </head>
 <body>
 
-<!-- UIレイアウト要素一式 -->
-<!-- ... (前述の通り) ... -->
+<div id="start-screen">
+  <h1>CYBER SURVIVOR</h1>
+  <div class="instructions">
+    [ <b>W,A,S,D</b> ] : MOVEMENT / [ <b>MOUSE</b> ] : AIM & ATTACK<br>
+    [ <b>G / RIGHT-CLICK</b> ] : GRENADE / [ <b>P</b> ] : PAUSE
+  </div>
+  <div class="developer-credit">Developed by Gemini</div>
+  
+  <div class="input-group">
+    <input type="text" id="player-name" class="input-field" placeholder="ENTER PLAYER NAME" maxlength="12">
+  </div>
+  
+  <div class="menu-btns">
+    <button onclick="startGame('solo')">INITIALIZE SYSTEM (SOLO)</button>
+    <button class="rank-btn" onclick="showRanking()">VIEW RANKING (TOP 10)</button>
+    <button class="vs-btn" onclick="joinLobby()">JOIN ONLINE VERSUS (VS)</button>
+  </div>
+
+  <div class="code-container">
+    <input type="text" id="room-code" class="input-field" placeholder="ROOM CODE (合言葉)" maxlength="16">
+  </div>
+
+  <div class="chat-open-tab" id="start-chat-tab" onclick="toggleChat('start-chat-container', 'start-chat-tab')">
+    ❮ CHAT
+  </div>
+  <div id="start-chat-container" class="chat-collapsed">
+    <div class="chat-header">
+      <span class="chat-header-title">SYSTEM CHAT</span>
+      <button class="chat-close-btn" onclick="toggleChat('start-chat-container', 'start-chat-tab')">❯</button>
+    </div>
+    <div id="start-chat-messages"></div>
+    <div id="start-chat-input-area">
+      <input type="text" id="start-chat-input" placeholder="ENTER MESSAGE..." maxlength="50">
+      <button id="btn-start-send-chat">SEND</button>
+    </div>
+  </div>
+</div>
+
+<div id="ranking-screen">
+  <h1>TOP 10 RANKING</h1>
+  <div id="ranking-list">LOADING...</div>
+  <button onclick="closeRanking()">RETURN TO TITLE</button>
+</div>
+
+<div id="lobby-screen">
+  <h1 id="lobby-title">VS LOBBY</h1>
+  <div id="lobby-players">LOADING...</div>
+  
+  <div class="chat-open-tab" id="lobby-chat-tab" onclick="toggleChat('lobby-chat-container', 'lobby-chat-tab')">
+    ❮ CHAT
+  </div>
+  <div id="lobby-chat-container" class="chat-collapsed">
+    <div class="chat-header">
+      <span class="chat-header-title">LOBBY CHAT</span>
+      <button class="chat-close-btn" onclick="toggleChat('lobby-chat-container', 'lobby-chat-tab')">❯</button>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-area">
+      <input type="text" id="chat-input" placeholder="ENTER MESSAGE..." maxlength="50">
+      <button id="btn-send-chat">SEND</button>
+    </div>
+  </div>
+
+  <div class="menu-btns" style="margin-top: 20px;">
+    <div style="display: flex; gap: 15px; justify-content: center; align-items: center; margin-bottom: 10px;">
+      <span style="color:var(--cyan); font-weight:bold; font-size: 16px; letter-spacing: 2px;">MODE:</span>
+      <button id="mode-toggle-btn" class="vs-btn" style="padding: 10px 20px; font-size: 14px;" onclick="toggleGameMode()">BATTLE ROYALE</button>
+    </div>
+    <button id="start-match-btn" class="vs-btn" onclick="startVsMatchWithMode()">START MATCH</button>
+    <button onclick="leaveLobby()" style="border-color: #888; color: #888;">CANCEL</button>
+  </div>
+</div>
+
+<div id="minimap-container">
+  <canvas id="minimap-canvas" width="160" height="160"></canvas>
+</div>
+
+<div id="ui-layer">
+  <div id="score-row">
+    <div style="display: flex; gap: 15px; align-items: center;">
+      <div id="score-container">SCORE: <span id="score-val">0</span></div>
+      <div id="survivors-container">ALIVE: <span id="survivors-val">0</span></div>
+    </div>
+    <button id="pause-btn" onclick="togglePause()">PAUSE</button>
+  </div>
+  
+  <div class="bar-group">
+    <div class="bar-label"><span>SYSTEM INTEGRITY</span><span class="val-text" id="hp-txt">100/100</span></div>
+    <div class="bar-bg"><div id="hp-bar" class="bar-fill" style="width: 100%;"></div></div>
+  </div>
+  <div class="bar-group" id="exp-group">
+    <div class="bar-label"><span>LV.<span id="lv-num">1</span> DATA SYNC</span><span class="val-text" id="exp-txt">0%</span></div>
+    <div class="bar-bg"><div id="exp-bar" class="bar-fill" style="width: 0%;"></div></div>
+  </div>
+
+  <div id="team-status-container">
+    <div class="team-status-title">TEAM MATES</div>
+    <ul id="team-members-list"></ul>
+  </div>
+
+  <div id="weapon-container">
+    <div id="slot-0" class="w-slot active" onmousedown="p.weaponIdx=0; event.stopPropagation();" ontouchstart="p.weaponIdx=0; event.stopPropagation();">AK-47</div>
+    <div id="slot-1" class="w-slot" onmousedown="p.weaponIdx=1; event.stopPropagation();" ontouchstart="p.weaponIdx=1; event.stopPropagation();">SNIPER</div>
+    <div id="slot-2" class="w-slot" onmousedown="p.weaponIdx=2; event.stopPropagation();" ontouchstart="p.weaponIdx=2; event.stopPropagation();">SWORD</div>
+    <div id="slot-3" class="w-slot" onmousedown="p.weaponIdx=3; event.stopPropagation();" ontouchstart="p.weaponIdx=3; event.stopPropagation();">SHOTGUN</div>
+  </div>
+  <div id="sub-inventory">
+    <div id="btn-grenade" onmousedown="p.throwGrenade(); event.stopPropagation();" ontouchstart="p.throwGrenade(); event.stopPropagation();">
+      G
+      <span id="grenade-val">0</span>
+    </div>
+  </div>
+</div>
+
+<div id="move-base" class="stick-base"><div id="move-knob" class="stick-knob"></div></div>
+<div id="aim-base" class="stick-base"><div id="aim-knob" class="stick-knob"></div></div>
+
+<div id="level-panel">
+  <h1 style="font-size: 32px; letter-spacing: 2px; text-shadow: 0 0 15px var(--cyan);">ENHANCEMENT DETECTED</h1>
+  <div class="card-wrap" id="card-wrap"></div>
+</div>
+
+<div id="pause-screen">
+  <h1>SYSTEM PAUSED</h1>
+  <div class="pause-btns">
+    <button onclick="togglePause()">RESUME</button>
+    <button onclick="backToTitle()">RETURN TO TITLE</button>
+  </div>
+</div>
+
+<div id="over-screen">
+  <h1>SYSTEM FAILURE</h1>
+  <div class="final-score-display">FINAL SCORE: <span id="final-score-val">0</span></div>
+  <button onmousedown="event.stopPropagation(); backToTitle();" ontouchstart="event.stopPropagation(); backToTitle();" onclick="backToTitle()">RETURN TO TITLE</button>
+  <button id="btn-spectate" class="btn" style="display:none; background:var(--cyan); margin-top:15px; border: 1px solid var(--cyan); color: #fff; padding: 10px 20px; font-weight: bold; cursor: pointer;" onmousedown="event.stopPropagation(); startSpectate();" ontouchstart="event.stopPropagation(); startSpectate();" onclick="startSpectate()">SPECTATE (GHOST)</button>
+</div>
+
+<div id="victory-screen">
+  <h1>MISSION ACCOMPLISHED</h1>
+  <div class="final-score-display">FINAL SCORE: <span id="victory-score-val">0</span></div>
+  <button onmousedown="event.stopPropagation(); backToTitle();" ontouchstart="event.stopPropagation(); backToTitle();" onclick="backToTitle()">RETURN TO TITLE</button>
+</div>
+
+<button id="btn-leave-spectate" class="btn" style="display:none; position:fixed; top:20px; left:20px; z-index:9999; background:rgba(0, 20, 30, 0.8); padding:10px 20px; font-size:16px; border: 2px solid #00f2ff; color: #00f2ff; cursor: pointer; font-family: 'Segoe UI', Arial, sans-serif; font-weight: bold; box-shadow: 0 0 10px rgba(0, 242, 255, 0.4); text-shadow: 0 0 5px #00f2ff; border-radius: 4px;" onmouseover="this.style.background='rgba(0, 242, 255, 0.2)'; this.style.boxShadow='0 0 20px rgba(0, 242, 255, 0.8)';" onmouseout="this.style.background='rgba(0, 20, 30, 0.8)'; this.style.boxShadow='0 0 10px rgba(0, 242, 255, 0.4)';" onmousedown="event.stopPropagation(); backToTitle();" ontouchstart="event.stopPropagation(); backToTitle();" onclick="backToTitle()">RETURN TO TITLE</button>
 
 <canvas id="c"></canvas>
 
-<!-- ここで外部ファイル game.js をロードします -->
+<!-- 外部化したゲームスクリプト -->
 <script src="game.js"></script>
 </body>
 </html>
